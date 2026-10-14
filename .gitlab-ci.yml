@@ -1,0 +1,152 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# GitLab CI to:
+# 1) Clone latest Kokkos from internal GitLab
+# 2) Build & install Kokkos with CUDA + OpenMP in Release
+# 3) Build and test this repo's test_suite against that Kokkos
+#
+# Requirements:
+# - GPU-capable runner configured with NVIDIA Docker runtime
+# - Appropriate tags (adjust `tags:` below to match your runner)
+# - Runner must be able to access gitlab-master.nvidia.com:5005 to pull the container
+#
+# Notes:
+# - Uses your custom Kokkos container (gitlab-master.nvidia.com:5005/jonathanw/containers/kokkos/base:071125)
+# - Container has all dependencies pre-installed (git, cmake, nvcc, build tools)
+# - By default uses HTTPS with CI_JOB_TOKEN; can switch to SSH if needed
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == "main"
+    - when: never
+
+stages:
+  - prepare
+  - build_kokkos
+  - build
+  - test
+
+variables:
+  # Base build configuration
+  CMAKE_BUILD_TYPE: "Release"
+
+  # Kokkos locations inside CI workspace
+  KOKKOS_SRC_DIR: "$CI_PROJECT_DIR/kokkos/src"
+  KOKKOS_BUILD_DIR: "$CI_PROJECT_DIR/kokkos/build"
+  KOKKOS_INSTALL_DIR: "$CI_PROJECT_DIR/kokkos/install"
+
+  # Repo URL - Using SSH with port 12051
+  # Requires SSH keys configured on GitLab runner
+  KOKKOS_REPO_URL: "ssh://git@gitlab-master.nvidia.com:12051/Devtech-Compute/kokkos.git"
+  # Alternative: HTTPS with CI_JOB_TOKEN (if SSH not available)
+  # KOKKOS_REPO_URL: "https://oauth2:${CI_JOB_TOKEN}@gitlab-master.nvidia.com/Devtech-Compute/kokkos.git"
+
+  # Enable GPU visibility when using Docker + NVIDIA runtime
+  NVIDIA_VISIBLE_DEVICES: "all"
+  NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+
+.base_job:
+  image: gitlab-master.nvidia.com:5005/jonathanw/containers/kokkos/base:071125
+  tags:
+    # Adjust these tags to match your GPU runner labels
+    - gpu
+    - cuda
+  before_script:
+    # Container already has git, cmake, nvcc, etc. pre-installed
+    - git --version
+    - cmake --version
+    - nvcc --version
+
+fetch:kokkos:
+  stage: prepare
+  extends: .base_job
+  script:
+    - mkdir -p "$KOKKOS_SRC_DIR"
+    - |
+      # Configure git to use SSH without host key verification (for CI)
+      export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 12051"
+      if [ ! -d "$KOKKOS_SRC_DIR/.git" ]; then
+        git clone --depth 1 "$KOKKOS_REPO_URL" "$KOKKOS_SRC_DIR"
+      else
+        git -C "$KOKKOS_SRC_DIR" fetch --depth 1 origin
+        git -C "$KOKKOS_SRC_DIR" reset --hard origin/HEAD
+      fi
+  artifacts:
+    paths:
+      - kokkos/src
+    expire_in: 3 days
+
+build:kokkos:
+  stage: build_kokkos
+  extends: .base_job
+  needs: ["fetch:kokkos"]
+  script:
+    # Clean build directory to ensure fresh build
+    - rm -rf "$KOKKOS_BUILD_DIR"
+    - mkdir -p "$KOKKOS_BUILD_DIR" "$KOKKOS_INSTALL_DIR"
+    # Copy nvcc_wrapper into install/bin so downstream jobs can reference a stable path
+    - mkdir -p "$KOKKOS_INSTALL_DIR/bin"
+    - cp "$KOKKOS_SRC_DIR/bin/nvcc_wrapper" "$KOKKOS_INSTALL_DIR/bin/nvcc_wrapper"
+    - chmod +x "$KOKKOS_INSTALL_DIR/bin/nvcc_wrapper"
+    # Configure
+    - |
+      cmake -S "$KOKKOS_SRC_DIR" -B "$KOKKOS_BUILD_DIR" \
+        -D CMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
+        -D CMAKE_CXX_COMPILER="$KOKKOS_INSTALL_DIR/bin/nvcc_wrapper" \
+        -D Kokkos_ENABLE_CUDA=ON \
+        -D Kokkos_ENABLE_OPENMP=ON \
+        -D Kokkos_ENABLE_DEPRECATION_WARNINGS=ON \
+        -D Kokkos_ENABLE_IMPL_CUDA_MALLOC_ASYNC=ON \
+        -D Kokkos_ARCH_NATIVE=ON \
+        -D CMAKE_INSTALL_PREFIX="$KOKKOS_INSTALL_DIR"
+    # Build + Install
+    - cmake --build "$KOKKOS_BUILD_DIR" --parallel
+    - cmake --install "$KOKKOS_BUILD_DIR"
+    # Show Kokkos CMake package files for downstream find_package
+    - find "$KOKKOS_INSTALL_DIR" -maxdepth 3 -type f -name "KokkosConfig.cmake" -print || true
+  artifacts:
+    paths:
+      - kokkos/install
+    expire_in: 7 days
+
+build:test_suite:
+  stage: build
+  extends: .base_job
+  needs: ["build:kokkos"]
+  variables:
+    TEST_SUITE_SRC_DIR: "$CI_PROJECT_DIR/test_suite"
+    TEST_SUITE_BUILD_DIR: "$CI_PROJECT_DIR/test_suite/build"
+  script:
+    - test -d "$TEST_SUITE_SRC_DIR" || { echo "Expected test_suite directory at $TEST_SUITE_SRC_DIR"; exit 1; }
+    # Clean build directory to ensure fresh build
+    - rm -rf "$TEST_SUITE_BUILD_DIR"
+    - mkdir -p "$TEST_SUITE_BUILD_DIR"
+    # Configure test suite to use installed Kokkos and nvcc_wrapper
+    - |
+      cmake -S "$TEST_SUITE_SRC_DIR" -B "$TEST_SUITE_BUILD_DIR" \
+        -D CMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
+        -D CMAKE_CXX_COMPILER="$KOKKOS_INSTALL_DIR/bin/nvcc_wrapper" \
+        -D CMAKE_PREFIX_PATH="$KOKKOS_INSTALL_DIR" \
+        -D Kokkos_ROOT="$KOKKOS_INSTALL_DIR"
+    - cmake --build "$TEST_SUITE_BUILD_DIR" --parallel
+  artifacts:
+    paths:
+      - test_suite/build
+    expire_in: 3 days
+
+test:test_suite:
+  stage: test
+  extends: .base_job
+  needs: ["build:test_suite"]
+  variables:
+    TEST_SUITE_BUILD_DIR: "$CI_PROJECT_DIR/test_suite/build"
+    CTEST_OUTPUT_ON_FAILURE: "1"
+  script:
+    - test -d "$TEST_SUITE_BUILD_DIR" || { echo "Missing build dir $TEST_SUITE_BUILD_DIR"; exit 1; }
+    # Optionally control CPU threads used by OpenMP tests
+    - export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+    # Run tests
+    - ctest --test-dir "$TEST_SUITE_BUILD_DIR" --output-on-failure --parallel "$(nproc)"

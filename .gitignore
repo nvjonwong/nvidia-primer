@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Build artifacts
+test_suite/Makefile
+test_suite/build/
+test_suite/*.o
+test_suite/*.a
+test_suite/*.so
+*.log
+
+# Kokkos source/build (local only)
+kokkos/
+
+# Editorial notes (working documents, not for tracking)
+*-EDITORIAL-NOTES.md
+
+# Analysis documents (tracked on working/analysis branch)
+analysis/
+
+# Documentation backups
+documentation_backup_*/
+
+# Profiling artifacts (keep timelines and summaries for baselines)
+test_suite/baselines/**/*.nsys-rep
+test_suite/baselines/**/*.sqlite
+test_suite/*.nsys-rep
+test_suite/*.sqlite
+test_suite/*.qdrep
+test_suite/*.qdstrm
+
+# Regression report (generated)
+test_suite/regression_report.txt
+
+# Temporary profiling files
+test_suite/*_timeline.txt
+test_suite/*_summary.txt
+
+# Python cache
+__pycache__/
+test_suite/__pycache__/
+test_suite/*.pyc
+
+# Temp/scratch files
+hello
+*.backup
+consolidation_cleanup.sh
+GIT_ADD_COMMANDS.sh
+CONSOLIDATION_COMPLETE.md
+CONSOLIDATION_PLAN.md
+test-ssh-agent.sh
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

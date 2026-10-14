@@ -1,0 +1,45 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+description: When editing chapter or guide files, keep NvidiaKokkosPrimer.md and DOCUMENTATION_INDEX.md in sync, and run the linter on modified files.
+globs:
+- '[0-9][0-9]-*.md'
+- 'test_suite/*.md'
+alwaysApply: false
+---
+
+# Keep Index Files In Sync
+
+When you add, rename, delete, or significantly restructure a chapter or guide file, update both index files before finishing.
+
+## NvidiaKokkosPrimer.md (main TOC)
+
+Tracks: H1 title as the linked item + H2 section headings as bullet points.
+
+- Add a numbered list item when a chapter is added
+- Update bullet points when H2 headings change
+- Remove the item when a chapter is deleted
+- H3 sub-sections may be mentioned parenthetically only for distinct major concepts
+
+## DOCUMENTATION_INDEX.md (quick-reference index)
+
+Tracks: a single-sentence description of each file's scope.
+
+- Add an entry under `## Chapters` when a chapter is added
+- Add entries under `## Guides (in test_suite/)` for new guide files
+- Update description only if the chapter's subject matter changes meaningfully
+- Use the linked heading format: `### [`filename`](relative/path)` for all `.md` entries
+
+## When NOT to update
+
+Do not update either index for minor edits: adding examples, fixing typos, rewording, or adding code snippets that don't change the chapter's scope.
+
+## Run the linter
+
+After editing any chapter file, run the style linter on the modified file:
+
+```bash
+python style-guide/lint_docs.py <modified-file.md>
+```
+
+Fix any violations before finishing. **`SG-1-LEN` (file length) is advisory**: a modest overage above 600 lines is acceptable if the additional content is necessary for completeness and clarity of presentation. Large regressions or length increases that could be addressed by splitting a chapter should still be resolved. See `style-guide/MAINTENANCE.md` for the full update protocol.
